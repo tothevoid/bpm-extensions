@@ -1,101 +1,131 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as path from "path";
+import * as fs from "fs";
+import {DataBinding, RowData, ColumnData, Sequence} from "./bindingTypes"
 
-import { simpleGit, SimpleGit, CleanOptions } from 'simple-git';
+import { simpleGit } from 'simple-git';
 
+const PRIMARY_COLUMN_UID = "ae0e45ca-c495-4fe7-a39d-3ab7278e1617";
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
-	const git = simpleGit("C:\\Users\\tothe\\Desktop\\test");
-	git.log({file: "C:\\Users\\tothe\\Desktop\\test\\data.json"})
+	const currentlyOpenTabfilePath = vscode?.window.activeTextEditor?.document.fileName ?? "";
+	const openedFile = path.basename(currentlyOpenTabfilePath);
+	const gitRoot = findGitRoot(currentlyOpenTabfilePath);
+	const git = simpleGit(gitRoot);
+	git.log({file: currentlyOpenTabfilePath})
 		.then(callback => {
 			const {hash} = callback.all[0];
-			git.show(`${hash}:data.json`).then(res => {
-				var currentlyOpenTabfilePath = vscode?.window.activeTextEditor?.document.fileName ?? "";
+			git.show(`${hash}:${openedFile}`).then(comittedFileContent => {
 				vscode.workspace.openTextDocument(currentlyOpenTabfilePath).then((document) => {
-					const commitedData:any = JSON.parse(res);
-					const modifiedData:any = JSON.parse(document.getText());
+					const commitedBinding: DataBinding = JSON.parse(comittedFileContent);
+					const currentBinding: DataBinding = JSON.parse(document.getText());
 					
-					const columnOrder = getColumnOrder(commitedData.PackageData);
-					const recordsOrder = getRecordsOrder(commitedData.PackageData);
+					const columnOrder = getColumnOrder(commitedBinding.PackageData);
+					const rowsOrder = getRecordsOrder(commitedBinding.PackageData);
 
-					const reorderedRows = [...Array(commitedData.PackageData.length)];
-					
-					modifiedData.PackageData.forEach((packageElement:any) => {
-						const reorderedColumns = [...Array(packageElement.Row.length)];
-						let recordId: any;
-						packageElement.Row.forEach((rowElement:any) => {
-							if (rowElement?.SchemaColumnUId === "ae0e45ca-c495-4fe7-a39d-3ab7278e1617"){
-								recordId = rowElement.Value;
-							}
-							const ix = columnOrder[rowElement.SchemaColumnUId];
-							reorderedColumns[ix] = rowElement;
-						});
-
-						const rowIx = recordsOrder[recordId];
-						reorderedRows[rowIx] = {Row: reorderedColumns};
-					});
-
-					const file = getFile({PackageData: reorderedRows});
+					const reorderedRows = reorderRowsAndColumns(currentBinding, columnOrder, rowsOrder);
+					const file = generateReorderedFile({PackageData: reorderedRows});
 
 					const editor = vscode.window.activeTextEditor;
 					if (editor) {
 						editor.edit(editBuilder => {
-							editBuilder.replace(new vscode.Range(0,0,document.lineCount, 1000), file);
+							editBuilder.replace(new vscode.Range(0, 0, document.lineCount, 1000), file);
+							vscode.window.showInformationMessage('Formatting fixed');
 						});
 					}
 				  });
 			});
-		})
-	;
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "bpmsoft-ext" is now active!');
+		});
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	let disposable = vscode.commands.registerCommand('bpmsoft-ext.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from bpmsoft-ext!');
-	});
+	let disposable = vscode.commands.registerCommand('bpmsoft-ext.fixDataOrder', () => {});
 
 	context.subscriptions.push(disposable);
 }
 
-const parseData = (data: any) => {
-	// data.PackageData[0].Row[0].Value
-	// return model.Row.Select(row => row.SchemaColumnUId).Select((elm, ix) => new { Item = elm, Index = ix})
-	// 	.ToDictionary(k => k.Item, v => v.Index);
+/**
+ * Recursively looking for the .git file
+ * @param initialFilePath File path to start
+ * @returns Path of the directory with .git file if it exists
+ */
+const findGitRoot: any = (initialFilePath: string) => {
+	const parts = initialFilePath.split(path.sep);
+	const higherDir: string[] = parts.slice(0, parts.length - 1);
+	const newPath: string = path.join(...higherDir);
+	const files = fs.readdirSync(newPath);
+	if (files.includes(".git")){
+		return newPath;
+	} else if (!newPath) {
+		return "";
+	}
+	return findGitRoot(newPath);
+} 
+
+/**
+ * Returns correct columns order by actual data binding structure
+ * @param rows Binded data rows
+ * @returns {Sequence} Columns order
+ */
+const getColumnOrder = (rows: RowData[]) => {
+	const bindedColumns: ColumnData[] = rows.map(entity => entity.Row)[0];
+	const columnsIndentifiers: string[] = bindedColumns.map(el => el.SchemaColumnUId);
+	return columnsIndentifiers.reduce<Sequence>((columnOrder, currentValue, index) => {
+		columnOrder[currentValue] = index;
+		return columnOrder;
+	}, {});
 }
 
-const getColumnOrder = (obj: any[]) => {
-	const r:any[] = obj.map(elm => elm.Row)[0];
-	const r2:string[] = r.map(el => el.SchemaColumnUId);
+/**
+ * Returns correct rows order by actual data binding structure
+ * @param rows Binded data rows
+ * @returns {Sequence} Rows order
+ */
+const getRecordsOrder = (rows: RowData[]) => {
+	const bindedRows: ColumnData[][] = rows.map(entity => entity.Row);
+	const identifierColumnsSequence:string[] = bindedRows
+		.map((bindedRow: ColumnData[]) => 
+			(bindedRow.filter(column => column.SchemaColumnUId === PRIMARY_COLUMN_UID)[0])?.Value as string)
 	const result: any = {}
-	r2.forEach((val: string, ix: number) => {result[val] = ix});
-	return result;
+	return identifierColumnsSequence.reduce<Sequence>((columnOrder, currentValue, index) => {
+		columnOrder[currentValue] = index;
+		return result;
+	}, result);
 }
 
-const getRecordsOrder = (obj: any[]) => {
-	const id = "ae0e45ca-c495-4fe7-a39d-3ab7278e1617";
+/**
+ * Reorders data binding rows and columns
+ * @param currentBinding Data binding
+ * @param columnsOrder Columns correct sequence
+ * @param rowsOrder Rows correct sequence
+ * @returns {RowData[]} Rows order
+ */
+const reorderRowsAndColumns = (currentBinding: DataBinding, columnsOrder: Sequence, rowsOrder: Sequence) => {
+	const reorderedRows: RowData[] = [...Array(currentBinding.PackageData.length)];
 
-	const r:any[] = obj.map(elm => elm.Row);
-	const r2:string[] = r.map((el:any[]) => el.filter(el2 => el2.SchemaColumnUId === id)[0]).map(el => el.Value);
-	const result: any = {}
-	r2.forEach((val: string, ix: number) => {result[val] = ix});
-	return result;
+	currentBinding.PackageData.forEach((packageElement: RowData) => {
+		const reorderedColumns = [...Array(packageElement.Row.length)];
+		let recordId: any;
+		packageElement.Row.forEach((rowElement: ColumnData) => {
+			if (rowElement?.SchemaColumnUId === PRIMARY_COLUMN_UID){
+				recordId = rowElement.Value;
+			}
+			const correctColumnIndex = columnsOrder[rowElement.SchemaColumnUId];
+			reorderedColumns[correctColumnIndex] = rowElement;
+		});
+
+		const correctRowIndex = rowsOrder[recordId];
+		reorderedRows[correctRowIndex].Row = reorderedColumns;
+	});
+
+	return reorderedRows;
 }
 
-const getFile = (json: Object) => {
-	return JSON.stringify(json, null, "  ");
+/**
+ * Generates reordered file
+ * @param dataBinding Reordered data binding
+ * @returns {string} Text content of the file with correct order 
+ */
+const generateReorderedFile = (dataBinding: DataBinding) => {
+	return JSON.stringify(dataBinding, null, "  ");
 }
 
-
-
-// This method is called when your extension is deactivated
 export function deactivate() {}
