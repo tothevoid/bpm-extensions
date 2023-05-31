@@ -6,39 +6,48 @@ import {DataBinding, RowData, ColumnData, Sequence} from "./bindingTypes"
 import { simpleGit } from 'simple-git';
 
 const PRIMARY_COLUMN_UID = "ae0e45ca-c495-4fe7-a39d-3ab7278e1617";
+const EXPECTED_FILE_NAME = "data.json"
 
-export function activate(context: vscode.ExtensionContext) {
+export const activate = async (context: vscode.ExtensionContext) => {
 	const currentlyOpenTabfilePath = vscode?.window.activeTextEditor?.document.fileName ?? "";
 	const openedFile = path.basename(currentlyOpenTabfilePath);
+
+	if (openedFile !== EXPECTED_FILE_NAME){
+		vscode.window.showInformationMessage(`Incorrect active file. Expected: ${EXPECTED_FILE_NAME}`);
+		return;
+	}
+
 	const gitRoot = findGitRoot(currentlyOpenTabfilePath);
+
+	if (!gitRoot){
+		vscode.window.showInformationMessage(`There is no git repository in current workspace`);
+		return;
+	}
+
 	const git = simpleGit(gitRoot);
-	git.log({file: currentlyOpenTabfilePath})
-		.then(callback => {
-			const {hash} = callback.all[0];
-			git.show(`${hash}:${openedFile}`).then(comittedFileContent => {
-				vscode.workspace.openTextDocument(currentlyOpenTabfilePath).then((document) => {
-					const commitedBinding: DataBinding = JSON.parse(comittedFileContent);
-					const currentBinding: DataBinding = JSON.parse(document.getText());
-					
-					const columnOrder = getColumnOrder(commitedBinding.PackageData);
-					const rowsOrder = getRecordsOrder(commitedBinding.PackageData);
+	const gitFileLog = await git.log({file: currentlyOpenTabfilePath});
 
-					const reorderedRows = reorderRowsAndColumns(currentBinding, columnOrder, rowsOrder);
-					const file = generateReorderedFile({PackageData: reorderedRows});
+	if (!gitFileLog?.all?.length){
+		vscode.window.showInformationMessage(`There is no commited versions of that file`);
+		return;
+	}
 
-					const editor = vscode.window.activeTextEditor;
-					if (editor) {
-						editor.edit(editBuilder => {
-							editBuilder.replace(new vscode.Range(0, 0, document.lineCount, 1000), file);
-							vscode.window.showInformationMessage('Formatting fixed');
-						});
-					}
-				  });
-			});
-		});
+	const {hash} = gitFileLog.all[0];
+	const comittedFileContent = await git.show(`${hash}:${openedFile}`);
+	
+	const currentEditingFile = await vscode.workspace.openTextDocument(currentlyOpenTabfilePath);
+	const commitedBinding: DataBinding = JSON.parse(comittedFileContent);
+	const currentBinding: DataBinding = JSON.parse(currentEditingFile.getText());
+	
+	const columnsOrder = getColumnOrder(commitedBinding.PackageData);
+	const rowsOrder = getRecordsOrder(commitedBinding.PackageData);
+
+	const reorderedRows = reorderRowsAndColumns(currentBinding, columnsOrder, rowsOrder);
+	const file = generateReorderedFile({PackageData: reorderedRows});
+	
+	modifyActiveFile(currentEditingFile.lineCount, file)
 
 	let disposable = vscode.commands.registerCommand('bpmsoft-ext.fixDataOrder', () => {});
-
 	context.subscriptions.push(disposable);
 }
 
@@ -103,20 +112,35 @@ const reorderRowsAndColumns = (currentBinding: DataBinding, columnsOrder: Sequen
 
 	currentBinding.PackageData.forEach((packageElement: RowData) => {
 		const reorderedColumns = [...Array(packageElement.Row.length)];
-		let recordId: any;
+		let recordId = "";
 		packageElement.Row.forEach((rowElement: ColumnData) => {
 			if (rowElement?.SchemaColumnUId === PRIMARY_COLUMN_UID){
-				recordId = rowElement.Value;
+				recordId = rowElement.Value as string;
 			}
 			const correctColumnIndex = columnsOrder[rowElement.SchemaColumnUId];
 			reorderedColumns[correctColumnIndex] = rowElement;
 		});
 
 		const correctRowIndex = rowsOrder[recordId];
-		reorderedRows[correctRowIndex].Row = reorderedColumns;
+		reorderedRows[correctRowIndex] = {Row:reorderedColumns};
 	});
 
 	return reorderedRows;
+}
+
+/**
+ * Modify currently editing file
+ * @param linesCount Current file lines quantity
+ * @param fileContent Reorder file content
+ */
+const modifyActiveFile = (linesCount: number, fileContent: string) => {
+	const editor = vscode.window.activeTextEditor;
+	if (editor) {
+		editor.edit(editBuilder => {
+			editBuilder.replace(new vscode.Range(0, 0, linesCount, 1000), fileContent);
+			vscode.window.showInformationMessage('Formatting fixed');
+		});
+	}
 }
 
 /**
