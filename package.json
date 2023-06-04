@@ -15,7 +15,7 @@
     "commands": [
       {
         "command": "bpmsoft-ext.fixDataOrder",
-        "title": "Fix data binding order"
+        "title": "BPM extensions: Restore data binding order"
       }
     ]
   },
