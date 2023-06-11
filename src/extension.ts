@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { reorderDataBinding } from "./commands/reorder/dataBindingReorder"
-import { removeEmptyDirectories } from './commands/cleardirs/clearDirs';
+import { reorderDataBinding } from "./commands/reorder/data-bindings-reorder"
+import { removeEmptyDirectories } from './commands/removal/directories-removal';
 
 
 export const activate = async (context: vscode.ExtensionContext) => {

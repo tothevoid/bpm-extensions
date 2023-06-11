@@ -1,8 +1,9 @@
 import { readdirSync } from "fs";
 import { basename, join, sep } from "path";
-import * as vscode from 'vscode';
+import { window, workspace, Range } from "vscode";
 import { simpleGit } from 'simple-git';
-import { DataBinding, RowData, ColumnData, Sequence } from "./bindingTypes"
+import { WARNING} from "./warnings"
+import { DataBinding, RowData, ColumnData, Sequence } from "./types"
 
 const PRIMARY_COLUMN_UID = "ae0e45ca-c495-4fe7-a39d-3ab7278e1617";
 const EXPECTED_FILE_NAME = "data.json"
@@ -12,34 +13,45 @@ const EXPECTED_FILE_NAME = "data.json"
  * @returns 
  */
 export const reorderDataBinding = async () => {
-    const currentlyOpenTabfilePath = vscode?.window.activeTextEditor?.document.fileName ?? "";
-	const openedFile = basename(currentlyOpenTabfilePath);
+    const currentlyOpenTabfilePath = window.activeTextEditor?.document.fileName ?? "";
+	const openedFilePath = basename(currentlyOpenTabfilePath);
 
-	if (openedFile !== EXPECTED_FILE_NAME){
-		vscode.window.showInformationMessage(`Incorrect active file. Expected: ${EXPECTED_FILE_NAME}`);
+	if (openedFilePath !== EXPECTED_FILE_NAME){
+		window.showInformationMessage(WARNING.INCORRECT_FILE_PATH + EXPECTED_FILE_NAME);
 		return;
 	}
 
 	const gitRoot = findGitRoot(currentlyOpenTabfilePath);
 
 	if (!gitRoot){
-		vscode.window.showInformationMessage(`There is no git repository in current workspace`);
+		window.showInformationMessage(WARNING.NO_GIT_REPOSITORY);
 		return;
 	}
 
+	await startReoder(currentlyOpenTabfilePath, openedFilePath, gitRoot);
+}
+
+/**
+ * Start the processing of current file
+ * @param currentlyOpenTabfilePath Current data binding file
+ * @param openedFilePath  Path of 
+ * @param gitRoot Path of the git root
+ * @returns 
+ */
+const startReoder = async (currentlyOpenTabfilePath: string, openedFilePath: string, gitRoot: string) => {
 	const git = simpleGit(gitRoot);
 	const gitFileLog = await git.log({file: currentlyOpenTabfilePath});
 
 	if (!gitFileLog?.all?.length){
-		vscode.window.showInformationMessage(`There is no commited versions of that file`);
+		window.showInformationMessage(WARNING.NO_COMMITED_HISTORY);
 		return;
 	}
 
 	const {hash} = gitFileLog.all[0];
-	const comittedFileContent = await git.show(`${hash}:${openedFile}`);
+	const committedFileContent = await git.show(`${hash}:${openedFilePath}`);
 	
-	const currentEditingFile = await vscode.workspace.openTextDocument(currentlyOpenTabfilePath);
-	const commitedBinding: DataBinding = JSON.parse(comittedFileContent);
+	const currentEditingFile = await workspace.openTextDocument(currentlyOpenTabfilePath);
+	const commitedBinding: DataBinding = JSON.parse(committedFileContent);
 	const notStagedBinding: DataBinding = JSON.parse(currentEditingFile.getText());
 	
 	const columnsOrder = getColumnsOrder(commitedBinding.PackageData, notStagedBinding.PackageData);
@@ -52,11 +64,11 @@ export const reorderDataBinding = async () => {
 }
 
 /**
- * Recursively looking for the .git file
+ * Recursively searching for the .git file
  * @param initialFilePath File path to start
  * @returns Path of the directory with .git file if it exists
  */
-const findGitRoot: any = (initialFilePath: string) => {
+const findGitRoot = (initialFilePath: string): string => {
 	const parts = initialFilePath.split(sep);
 	const higherDir: string[] = parts.slice(0, parts.length - 1);
 	const newPath: string = join(...higherDir);
@@ -67,7 +79,7 @@ const findGitRoot: any = (initialFilePath: string) => {
 		return "";
 	}
 	return findGitRoot(newPath);
-} 
+}
 
 /**
  * Returns correct columns order by actual data binding structure
@@ -76,7 +88,7 @@ const findGitRoot: any = (initialFilePath: string) => {
  * @param modifiedRows Not staged binded data rows
  * @returns {Sequence} Columns order
  */
-const getColumnsOrder = (commitedRows: RowData[], modifiedRows: RowData[]) => {
+const getColumnsOrder = (commitedRows: RowData[], modifiedRows: RowData[]): Sequence => {
     const modifiedColumns: Set<string> = new Set(modifiedRows[0].Row
         .map(entity => entity.SchemaColumnUId));
 
@@ -100,7 +112,7 @@ const getColumnsOrder = (commitedRows: RowData[], modifiedRows: RowData[]) => {
  * @param modifiedRows Not staged binded data rows
  * @returns {Sequence} Rows order
  */
-const getRowsOrder = (commitedRows: RowData[], modifiedRows: RowData[]) => {
+const getRowsOrder = (commitedRows: RowData[], modifiedRows: RowData[]): Sequence|null => {
 	const commitedRowsIdentifiers = new Set(mapRowsIntoIdentifiers(commitedRows));
     //Case when identifier key is not presented into data set
     if (commitedRowsIdentifiers.size !== commitedRows.length){
@@ -120,13 +132,13 @@ const getRowsOrder = (commitedRows: RowData[], modifiedRows: RowData[]) => {
 	}, {});
 }
 
-const mapRowsIntoIdentifiers = (rows: RowData[]) => {
+const mapRowsIntoIdentifiers = (rows: RowData[]): string[] => {
     const bindedRows: ColumnData[][] = rows.map(row => row.Row);
 	return bindedRows
 		.map((bindedRow: ColumnData[]) => getKeyFromRow(bindedRow))
 }
 
-const getKeyFromRow = (rowColumns: ColumnData[]) => 
+const getKeyFromRow = (rowColumns: ColumnData[]): string => 
     rowColumns.find(column => column.SchemaColumnUId === PRIMARY_COLUMN_UID)?.Value as string
 
 /**
@@ -137,7 +149,7 @@ const getKeyFromRow = (rowColumns: ColumnData[]) =>
  * @returns {RowData[]} Rows order
  */
 const reorderRowsAndColumns = (currentBinding: DataBinding, columnsOrder: Sequence, 
-    rowsOrder: Sequence| null) => {
+	rowsOrder: Sequence| null): RowData[] => {
 	const reorderedRows: RowData[] = [...Array(currentBinding.PackageData.length)];
 
 	currentBinding.PackageData.forEach((packageElement: RowData, currentIndex: number) => {
@@ -163,11 +175,11 @@ const reorderRowsAndColumns = (currentBinding: DataBinding, columnsOrder: Sequen
  * @param fileContent Reorder file content
  */
 const modifyActiveFile = (linesCount: number, fileContent: string) => {
-	const editor = vscode.window.activeTextEditor;
+	const editor = window.activeTextEditor;
 	if (editor) {
 		editor.edit(editBuilder => {
-			editBuilder.replace(new vscode.Range(0, 0, linesCount, 1000), fileContent);
-			vscode.window.showInformationMessage('Formatting fixed');
+			editBuilder.replace(new Range(0, 0, linesCount, 1000), fileContent);
+				window.showInformationMessage('Formatting fixed');
 		});
 	}
 }
@@ -177,6 +189,6 @@ const modifyActiveFile = (linesCount: number, fileContent: string) => {
  * @param dataBinding Reordered data binding
  * @returns {string} Text content of the file with correct order 
  */
-const generateReorderedFile = (dataBinding: DataBinding) => {
+const generateReorderedFile = (dataBinding: DataBinding): string => {
 	return JSON.stringify(dataBinding, null, "  ");
 }

@@ -1,13 +1,14 @@
-import { basename, join, sep, } from "path";
+import { join, sep, } from "path";
 import { readdirSync, readFileSync, rmdirSync  } from "fs";
 import * as vscode from 'vscode';
-import { Descriptor, PackageOption } from "./clearTypes";
+import { Descriptor } from "./types";
+import { Option } from "./classes";
 
-const CLEAR_ALL_OPTION = "Clear all"
 const PACKAGES_DIR_NAME = "Pkg";
 const EXPECTED_DIRS = new Set(["Data", "Schemas", "Resources", "SqlScripts"]);
 const DESCRIPTOR_NAME = "descriptor.json";
 const LOCALIZATION_DIR = "Localization";
+const CLEAR_ALL_OPTION = "Clear all";
 
 /**
  * Removes empty directories in packages
@@ -30,14 +31,22 @@ export const removeEmptyDirectories = () => {
             if (selection){
                 const selectedOption = options.find(option => option.Name == selection);
                 if (selectedOption){
-                    const emptyDirectories = getEmptyDirectories(selectedOption.Path);
-                    clearDirectories(emptyDirectories);
+                    const emptyDirectories = (selectedOption.IsSelectedAll) ?
+                        getEmptyDirectoriesOfPackage(selectedOption.Path):
+                        getEmptyDirectoriesOfPackages(selectedOption.Path);
+                    const directoriesAffected = clearDirectories(emptyDirectories);
+                    vscode.window.showInformationMessage(`Successfully removed ${directoriesAffected} directories`);
                 }  
             }
         })
     };
 }
 
+/**
+ * Searching for the packages directory from the current opened directory
+ * @param initialFilePath Path when the search starts
+ * @returns Path of package directory
+ */
 const getPkgDirectoryPath = (initialFilePath: string) => {
     const urlParts = initialFilePath.split(sep);
     const hasPkgDirInPath = urlParts
@@ -50,6 +59,10 @@ const getPkgDirectoryPath = (initialFilePath: string) => {
     return searchResult;
 } 
 
+/**
+ * Getting opened directory path
+ * @returns Current directory path
+ */
 const getWorkingDirectoryPath = () => {
     let currentPath = vscode?.window.activeTextEditor?.document.fileName;
     if (!currentPath){
@@ -61,11 +74,30 @@ const getWorkingDirectoryPath = () => {
     return currentPath ?? "";
 }
 
-const getEmptyDirectories = (packagePath: string) => {
+/**
+ * Finds all empty directories of packages 
+ * @param rootPath Path of the Pkg directory 
+ * @returns All packages empty directories paths
+ */
+const getEmptyDirectoriesOfPackages = (rootPath: string): string[] => {
+    let emptyDirectories: string[] = [];
+    const directories = readdirSync(rootPath, { withFileTypes: true });
+    directories.filter(dir => dir.isDirectory()).forEach(dir => {
+        getEmptyDirectoriesOfPackage(join(rootPath, dir.name)).forEach(emptyDir => emptyDirectories.push(emptyDir));
+    })
+    return emptyDirectories;
+}
+
+/**
+ * Finds empty directories of package
+ * @param packagePath Package path 
+ * @returns Package empty directories paths
+ */
+const getEmptyDirectoriesOfPackage = (packagePath: string) => {
     const emptyDirectories: string[] = [];
-    const packageTypePaths = getPackagePaths(packagePath);
-    packageTypePaths.forEach(typePath => {
-        const packageTypesDirectory = join(packagePath, typePath.name);
+    const configurationElementTypeDirs = getConfigurationElementTypesDirs(packagePath);
+    configurationElementTypeDirs.forEach(configurationElementTypeDir => {
+        const packageTypesDirectory = join(packagePath, configurationElementTypeDir);
         const typedElements = readdirSync(packageTypesDirectory, { withFileTypes: true });
         typedElements.forEach(typedElement => {
             const entries = readdirSync(join(packageTypesDirectory, typedElement.name), { withFileTypes: true });
@@ -88,19 +120,36 @@ const getEmptyDirectories = (packagePath: string) => {
     return emptyDirectories;
 }
 
-const clearDirectories = (directoriesPaths: string[]) => {
+/**
+ * Removes directories by paths
+ * @param directoriesPaths Paths of directories which should be cleared
+ * @returns Quantity of cleared directories
+ */
+const clearDirectories = (directoriesPaths: string[]): number => {
+    let directoriesAffected = 0;
     directoriesPaths.forEach(directoryPath => {
         rmdirSync(directoryPath);
-        console.log(`Removed: ${directoryPath}`);
+        directoriesAffected++;
     });
+    return directoriesAffected;
 }
 
+/**
+ * Gets valid directories of configuration elements types
+ * @param packagePath Path of the package
+ * @returns Valid directories
+ */
+const getConfigurationElementTypesDirs = (packagePath: string): string[] => 
+    readdirSync(packagePath, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && EXPECTED_DIRS.has(entry.name))
+        .map(dirent => dirent.name);
 
-const getPackagePaths = (rootPath: string) => 
-    readdirSync(rootPath, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && EXPECTED_DIRS.has(entry.name));
-
-const getBackwardDirectory = (path: string) => {
+/**
+ * Searches for packages directory from the current to the start of the path
+ * @param path Path where the search starts
+ * @returns Packages directory if it exists
+ */
+const getBackwardDirectory = (path: string): string => {
     const pathParts = path.split(sep);
     const indexOfEnd = pathParts.findIndex(pathPart => pathPart === PACKAGES_DIR_NAME);
     return indexOfEnd !== -1 ?
@@ -108,7 +157,12 @@ const getBackwardDirectory = (path: string) => {
         "";
 }
 
-const getForwardDirectory = (path: string) => {
+/**
+ * Searches for packages directory from the current to the deepest one
+ * @param path Path where the search starts
+ * @returns Packages directory if it exists
+ */
+const getForwardDirectory = (path: string): string => {
 	const dirElements = readdirSync(path, { withFileTypes: true })
         .filter(entry => entry.isDirectory());
     for (let index = 0; index < dirElements.length; index++) {
@@ -126,19 +180,24 @@ const getForwardDirectory = (path: string) => {
     return "";
 }
 
-const getDeletionOptions = (path: string) => {
-    const dirs = readdirSync(path);
-    const options: PackageOption[] = [{Name: CLEAR_ALL_OPTION, Path: path}];
+/**
+ * Gets directories of the packages by the option format
+ * @param pkgPath Path of the packages root
+ * @returns 
+ */
+const getDeletionOptions = (pkgPath: string): Option[] => {
+    const dirs = readdirSync(pkgPath);
+    const options: Option[] = [new Option(CLEAR_ALL_OPTION, pkgPath, true)];
     dirs.forEach(subDir => {
-        const packagePath = join(path, subDir);
+        const packagePath = join(pkgPath, subDir);
         const packageData = readdirSync(packagePath);
         const descriptorPath = packageData.find(packageElement => packageElement === DESCRIPTOR_NAME);
         if (descriptorPath){
             const decriptorRaw = readFileSync(join(packagePath, descriptorPath), { encoding: 'utf8', flag: 'r' }).replace(/^\uFEFF/, '');
-            const descriptor: Descriptor = JSON.parse(decriptorRaw)
-            options.push({Name: descriptor.Descriptor.Name, Path: packagePath})
+            const descriptor: Descriptor = JSON.parse(decriptorRaw);
+            options.push(new Option(descriptor.Descriptor.Name, packagePath));
         } else {
-            options.push({Name: subDir, Path: packagePath});
+            options.push(new Option(subDir, packagePath));
         }
     })
     return options;

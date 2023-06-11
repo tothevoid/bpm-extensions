@@ -18,8 +18,8 @@
         "title": "BPM extensions: Restore data binding order"
       },
       {
-        "command": "bpmsoft-ext.clearDirs",
-        "title": "BPM extensions: Clear empty directories"
+        "command": "bpmsoft-ext.removeDirs",
+        "title": "BPM extensions: Remove empty directories"
       }
     ]
   },
