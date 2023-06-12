@@ -10,4 +10,5 @@ export type Descriptor = {
  */
 export type DescriptorData = {
     Name: string
+    Maintainer: string
 }

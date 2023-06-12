@@ -5,9 +5,9 @@ import { removeEmptyDirectories } from './commands/removal/directories-removal';
 
 export const activate = async (context: vscode.ExtensionContext) => {
 	const fixDataOrderCommand = vscode.commands.registerCommand('bpmsoft-ext.fixDataOrder', () => {reorderDataBinding();});
-	const clearDirsCommand = vscode.commands.registerCommand('bpmsoft-ext.clearDirs', () => {removeEmptyDirectories();});
+	const removeDirsCommand = vscode.commands.registerCommand('bpmsoft-ext.removeDirs', () => {removeEmptyDirectories();});
 	context.subscriptions.push(fixDataOrderCommand);
-	context.subscriptions.push(clearDirsCommand);
+	context.subscriptions.push(removeDirsCommand);
 }
 
 export function deactivate() {}

@@ -1,14 +1,16 @@
-import { join, sep, } from "path";
+import { join, sep } from "path";
 import { readdirSync, readFileSync, rmdirSync  } from "fs";
 import * as vscode from 'vscode';
 import { Descriptor } from "./types";
 import { Option } from "./classes";
+import { WARNING, NOTIFICATION} from "./messages";
 
 const PACKAGES_DIR_NAME = "Pkg";
 const EXPECTED_DIRS = new Set(["Data", "Schemas", "Resources", "SqlScripts"]);
 const DESCRIPTOR_NAME = "descriptor.json";
 const LOCALIZATION_DIR = "Localization";
-const CLEAR_ALL_OPTION = "Clear all";
+const REMOVE_ALL_OPTION = "Remove all";
+const VALID_MAINTAINER = "Customer"
 
 /**
  * Removes empty directories in packages
@@ -16,30 +18,48 @@ const CLEAR_ALL_OPTION = "Clear all";
 export const removeEmptyDirectories = () => {
     const workingDirectoryPath = getWorkingDirectoryPath();
     if (!workingDirectoryPath){
+        vscode.window.showInformationMessage(WARNING.NO_WORKING_DIRECTORY);
         return;
     }
 
     const pkgPath = getPkgDirectoryPath(workingDirectoryPath);
     if (!pkgPath) {
-        vscode.window.showInformationMessage(`There is no Pkg folder in the current workspace`);
+        vscode.window.showInformationMessage(WARNING.NO_PKG_DIRECTORY);
 		return;
     }
 
     const options = getDeletionOptions(pkgPath);
-    if (options){
-        vscode.window.showQuickPick(options.map(option => option.Name)).then((selection) => {
-            if (selection){
-                const selectedOption = options.find(option => option.Name == selection);
-                if (selectedOption){
-                    const emptyDirectories = (selectedOption.IsSelectedAll) ?
-                        getEmptyDirectoriesOfPackage(selectedOption.Path):
-                        getEmptyDirectoriesOfPackages(selectedOption.Path);
-                    const directoriesAffected = clearDirectories(emptyDirectories);
-                    vscode.window.showInformationMessage(`Successfully removed ${directoriesAffected} directories`);
-                }  
+    if (!options){
+        vscode.window.showInformationMessage(WARNING.NO_VALID_PACKAGES);
+		return;
+    }
+
+    vscode.window.showQuickPick(options.map(option => option.Name)).then((selection) => {
+        if (!selection){
+            return;
+        }
+
+        const selectedOption = options.find(option => option.Name == selection);
+        if (selectedOption){
+            const emptyDirectories = (selectedOption.IsSelectedAll) ?
+                getEmptyDirectoriesOfPackages(selectedOption.Path):
+                getEmptyDirectoriesOfPackage(selectedOption.Path);
+
+            const option = (selectedOption.IsSelectedAll) ?
+                NOTIFICATION.ALL_PKGS_OPTION:
+                selectedOption.Name;
+
+            if (emptyDirectories.length == 0){
+                vscode.window.showInformationMessage(`${NOTIFICATION.NO_EMPTY_DIRS} ${option}`);
+                return;
+            } else {
+                
+            
+                const directoriesAffected = removeDirectories(emptyDirectories);
+                vscode.window.showInformationMessage(`${option} directories removal job completed. Directories affected: ${directoriesAffected}`);
             }
-        })
-    };
+        }  
+    });
 }
 
 /**
@@ -122,12 +142,13 @@ const getEmptyDirectoriesOfPackage = (packagePath: string) => {
 
 /**
  * Removes directories by paths
- * @param directoriesPaths Paths of directories which should be cleared
- * @returns Quantity of cleared directories
+ * @param directoriesPaths Paths of directories which should be removed
+ * @returns Quantity of removed directories
  */
-const clearDirectories = (directoriesPaths: string[]): number => {
+const removeDirectories = (directoriesPaths: string[]): number => {
     let directoriesAffected = 0;
     directoriesPaths.forEach(directoryPath => {
+        console.log(directoryPath)
         rmdirSync(directoryPath);
         directoriesAffected++;
     });
@@ -187,7 +208,7 @@ const getForwardDirectory = (path: string): string => {
  */
 const getDeletionOptions = (pkgPath: string): Option[] => {
     const dirs = readdirSync(pkgPath);
-    const options: Option[] = [new Option(CLEAR_ALL_OPTION, pkgPath, true)];
+    const options: Option[] = [new Option(REMOVE_ALL_OPTION, pkgPath, true)];
     dirs.forEach(subDir => {
         const packagePath = join(pkgPath, subDir);
         const packageData = readdirSync(packagePath);
@@ -195,9 +216,9 @@ const getDeletionOptions = (pkgPath: string): Option[] => {
         if (descriptorPath){
             const decriptorRaw = readFileSync(join(packagePath, descriptorPath), { encoding: 'utf8', flag: 'r' }).replace(/^\uFEFF/, '');
             const descriptor: Descriptor = JSON.parse(decriptorRaw);
-            options.push(new Option(descriptor.Descriptor.Name, packagePath));
-        } else {
-            options.push(new Option(subDir, packagePath));
+            if (descriptor?.Descriptor?.Maintainer === VALID_MAINTAINER){
+                options.push(new Option(descriptor.Descriptor.Name, packagePath));
+            }
         }
     })
     return options;
