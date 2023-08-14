@@ -1,12 +1,16 @@
-import { readdirSync } from "fs";
-import { basename, join, sep } from "path";
-import { window, workspace, Range } from "vscode";
-import { simpleGit } from 'simple-git';
+import { basename } from "path";
+import { window } from "vscode";
 import { WARNING} from "./warnings"
 import { DataBinding, RowData, ColumnData, Sequence } from "./types"
+import { getLastCommitedFileContent } from "./git-tools"
+import { processDescriptor } from "./descriptor-processor"
+import { reWriteFile, readFile } from "./file-utilities";
 
 const PRIMARY_COLUMN_UID = "ae0e45ca-c495-4fe7-a39d-3ab7278e1617";
-const EXPECTED_FILE_NAME = "data.json"
+const DATA_FILE_NAME = "data.json"
+const DESCRIPTOR_FILE_NAME = "descriptor.json"
+
+const EXPECTED_FILES = [DATA_FILE_NAME, DESCRIPTOR_FILE_NAME];
 
 /**
  * Reorders data.json file by the pattern of the commited file
@@ -14,71 +18,34 @@ const EXPECTED_FILE_NAME = "data.json"
  */
 export const reorderDataBinding = async () => {
     const currentlyOpenTabfilePath = window.activeTextEditor?.document.fileName ?? "";
-	const openedFilePath = basename(currentlyOpenTabfilePath);
 
-	if (openedFilePath !== EXPECTED_FILE_NAME){
-		window.showInformationMessage(WARNING.INCORRECT_FILE_PATH + EXPECTED_FILE_NAME);
+	if (!EXPECTED_FILES.includes(basename(currentlyOpenTabfilePath))){
+		window.showInformationMessage(WARNING.INCORRECT_FILE_PATH + EXPECTED_FILES.join(" or "));
 		return;
 	}
-
-	const gitRoot = findGitRoot(currentlyOpenTabfilePath);
-
-	if (!gitRoot){
-		window.showInformationMessage(WARNING.NO_GIT_REPOSITORY);
-		return;
-	}
-
-	await startReoder(currentlyOpenTabfilePath, openedFilePath, gitRoot);
+	await processDescriptor(currentlyOpenTabfilePath.replace(DATA_FILE_NAME, DESCRIPTOR_FILE_NAME));
+	await startReoder(currentlyOpenTabfilePath.replace(DESCRIPTOR_FILE_NAME, DATA_FILE_NAME));
 }
 
 /**
  * Start the processing of current file
- * @param currentlyOpenTabfilePath Current data binding file
- * @param openedFilePath  Path of 
+ * @param dataPath Current data binding file
+ * @param openedFileName  Path of 
  * @param gitRoot Path of the git root
  * @returns 
  */
-const startReoder = async (currentlyOpenTabfilePath: string, openedFilePath: string, gitRoot: string) => {
-	const git = simpleGit(gitRoot);
-	const gitFileLog = await git.log({file: currentlyOpenTabfilePath});
-
-	if (!gitFileLog?.all?.length){
-		window.showInformationMessage(WARNING.NO_COMMITED_HISTORY);
+const startReoder = async (dataPath: string) => {
+	let commitedBinding = await getLastCommitedFileContent<DataBinding>(dataPath);
+	if (!commitedBinding){
 		return;
 	}
-
-	const {hash} = gitFileLog.all[0];
-	const committedFileContent = await git.show(`${hash}:${openedFilePath}`);
+	const newContent = readFile<DataBinding>(dataPath);
 	
-	const currentEditingFile = await workspace.openTextDocument(currentlyOpenTabfilePath);
-	const commitedBinding: DataBinding = JSON.parse(committedFileContent);
-	const notStagedBinding: DataBinding = JSON.parse(currentEditingFile.getText());
-	
-	const columnsOrder = getColumnsOrder(commitedBinding.PackageData, notStagedBinding.PackageData);
-	const rowsOrder = getRowsOrder(commitedBinding.PackageData, notStagedBinding.PackageData);
+	const columnsOrder = getColumnsOrder(commitedBinding.PackageData, newContent.PackageData);
+	const rowsOrder = getRowsOrder(commitedBinding.PackageData, newContent.PackageData);
 
-	const reorderedRows = reorderRowsAndColumns(notStagedBinding, columnsOrder, rowsOrder);
-	const file = generateReorderedFile({PackageData: reorderedRows});
-	
-	modifyActiveFile(currentEditingFile.lineCount, file)
-}
-
-/**
- * Recursively searching for the .git file
- * @param initialFilePath File path to start
- * @returns Path of the directory with .git file if it exists
- */
-const findGitRoot = (initialFilePath: string): string => {
-	const parts = initialFilePath.split(sep);
-	const higherDir: string[] = parts.slice(0, parts.length - 1);
-	const newPath: string = join(...higherDir);
-	const files = readdirSync(newPath);
-	if (files.includes(".git")){
-		return newPath;
-	} else if (!newPath) {
-		return "";
-	}
-	return findGitRoot(newPath);
+	const reorderedRows = reorderRowsAndColumns(newContent, columnsOrder, rowsOrder);
+	reWriteFile<DataBinding>(dataPath, {PackageData: reorderedRows});
 }
 
 /**
@@ -167,28 +134,4 @@ const reorderRowsAndColumns = (currentBinding: DataBinding, columnsOrder: Sequen
 	});
 
 	return reorderedRows;
-}
-
-/**
- * Modify currently editing file
- * @param linesCount Current file lines quantity
- * @param fileContent Reorder file content
- */
-const modifyActiveFile = (linesCount: number, fileContent: string) => {
-	const editor = window.activeTextEditor;
-	if (editor) {
-		editor.edit(editBuilder => {
-			editBuilder.replace(new Range(0, 0, linesCount, 1000), fileContent);
-				window.showInformationMessage('Formatting fixed');
-		});
-	}
-}
-
-/**
- * Generates reordered file
- * @param dataBinding Reordered data binding
- * @returns {string} Text content of the file with correct order 
- */
-const generateReorderedFile = (dataBinding: DataBinding): string => {
-	return JSON.stringify(dataBinding, null, "  ");
 }

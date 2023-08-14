@@ -26,3 +26,25 @@ export type ColumnData = {
 export type Sequence = {
 	[key: string]: number;
 }
+
+/**
+ * Configuration element descriptor root
+ */
+export type Descriptor = {
+    Descriptor: DescriptorData
+}
+
+/**
+ * Descriptor details
+ */
+export type DescriptorData = {
+	ModifiedOnUtc: string,
+	Columns: DescriptorColumn[]
+}
+
+export type DescriptorColumn = {
+	ColumnUId: string,
+	IsForceUpdate: boolean,
+	IsKey: boolean,
+	ColumnName: string
+}
