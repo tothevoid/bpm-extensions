@@ -1,6 +1,6 @@
 {
-  "name": "bpmsoft-ext",
-  "displayName": "bpmsoft-ext",
+  "name": "multi-git",
+  "displayName": "multi-git",
   "description": "",
   "version": "0.0.1",
   "engines": {
@@ -14,14 +14,19 @@
   "contributes": {
     "commands": [
       {
-        "command": "bpmsoft-ext.fixDataOrder",
-        "title": "BPM extensions: Restore data binding order"
-      },
-      {
-        "command": "bpmsoft-ext.removeDirs",
-        "title": "BPM extensions: Remove empty directories"
+          "command": "multi-git.pullAll",
+          "title": "Pull all repositories"
       }
-    ]
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "multi-git.pullAll",
+          "group": "1_header@1",
+          "when": "scmProvider == git"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run esbuild-base -- --minify",
